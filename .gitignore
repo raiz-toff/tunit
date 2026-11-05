@@ -1,0 +1,8 @@
+tunit
+tunit.exe
+tunit-linux-*
+tunit-darwin-*
+tunit-windows-*
+QC_REPORT_*.txt
+QC_REPORT_*.json
+dist/
