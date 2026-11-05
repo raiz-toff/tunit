@@ -33,7 +33,7 @@ jobs:
     steps:
       - name: Install tunit
         run: |
-          curl -fsSL https://github.com/tunit/tunit/releases/latest/download/install.sh | bash
+          curl -fsSL https://github.com/raiz-toff/tunit/releases/latest/download/install.sh | bash
 
       - name: Run QC
         run: tunit qc --auto
@@ -216,6 +216,7 @@ jobs:
     steps:
       - name: Thermal soak
         run: tunit stress --duration 10m --warn-temp 82 --fail-temp 92
+
 
       - name: Network check
         run: tunit net
