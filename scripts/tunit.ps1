@@ -52,4 +52,68 @@ Write-Host ""
 Write-Host "Installed: $dest" -ForegroundColor Green
 Write-Host ""
 
+# Run tunit — keep control for cleanup after
+$ErrorActionPreference = 'Continue'
 & $dest
+$tunitExit = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+
+Write-Host ""
+Write-Host "----------------------------------------" -ForegroundColor DarkGray
+Write-Host ""
+
+# Find QC reports in common locations
+$reportDirs = @($env:TEMP, $PWD.Path, $HOME)
+$reports = @()
+foreach ($d in $reportDirs) {
+    if (Test-Path $d) {
+        $found = Get-ChildItem -Path $d -Filter "QC_REPORT_*.txt" -ErrorAction SilentlyContinue
+        if ($found) { $reports += $found }
+    }
+}
+
+if ($reports.Count -gt 0) {
+    Write-Host "  Found $($reports.Count) QC report(s):" -ForegroundColor Cyan
+    foreach ($r in $reports) {
+        Write-Host "    * $($r.FullName)"
+    }
+    Write-Host ""
+    $save = Read-Host "  Save report(s) to Desktop? [Y/n]"
+    if (-not $save -or $save -match '^[Yy]') {
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        foreach ($r in $reports) {
+            Copy-Item -Path $r.FullName -Destination $desktop -Force
+            Write-Host "  Saved: $(Join-Path $desktop $r.Name)" -ForegroundColor Green
+        }
+    }
+    # Remove report files from original locations
+    foreach ($r in $reports) {
+        Remove-Item -Path $r.FullName -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Write-Host ""
+Write-Host "  Cleaning up..." -ForegroundColor Yellow
+
+# Remove tunit install directory and temp download
+Remove-Item -Path $installDir -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue
+Write-Host "  Removed tunit binary" -ForegroundColor Green
+
+# Remove from system PATH
+$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+if ($machinePath -like "*$installDir*") {
+    try {
+        $cleanPath = ($machinePath -split ';' | Where-Object { $_ -ne $installDir }) -join ';'
+        [Environment]::SetEnvironmentVariable('Path', $cleanPath, 'Machine')
+        Write-Host "  Removed from system PATH" -ForegroundColor Green
+    } catch {
+        Write-Host "  Could not clean PATH — run as Administrator to remove manually:" -ForegroundColor Yellow
+        Write-Host "    $installDir" -ForegroundColor Yellow
+    }
+}
+
+Write-Host "  All traces cleaned" -ForegroundColor Green
+Write-Host ""
+
+exit $tunitExit
