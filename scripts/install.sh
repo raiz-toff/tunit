@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="tunit/tunit"
+REPO="raiz-toff/tunit"
 BIN_DIR="${TUNIT_BIN_DIR:-/usr/local/bin}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

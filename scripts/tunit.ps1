@@ -4,11 +4,11 @@
   tunit — Universal system diagnostic, stress, and load testing tool
 .DESCRIPTION
   Downloads the tunit binary for Windows and runs it.
-  Usage: irm https://github.com/tunit/tunit/releases/latest/download/tunit.ps1 | iex
+  Usage: irm https://github.com/raiz-toff/tunit/releases/latest/download/tunit.ps1 | iex
 #>
 
 $ErrorActionPreference = 'Stop'
-$repo    = 'tunit/tunit'
+$repo    = 'raiz-toff/tunit'
 $asset   = 'tunit-windows-amd64.exe'
 $version = if ($env:TUNIT_VERSION) { $env:TUNIT_VERSION } else { 'latest' }
 $dest    = Join-Path $env:TEMP 'tunit.exe'
