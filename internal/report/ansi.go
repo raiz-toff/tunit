@@ -115,9 +115,9 @@ func PrintLoadResult(res *types.LoadResult) {
 	fmt.Printf(" Requests  [total, rate, throughput]  %d, %.2f, %.2f req/s\n",
 		res.TotalReqs, float64(res.TotalReqs)/res.Duration.Seconds(), res.Throughput)
 	fmt.Printf(" Duration  %s\n", res.Duration.Round(time.Millisecond))
-	fmt.Printf(" Latencies [min, 50, 95, 99, 99.9, max]\n")
-	fmt.Printf("           %s  %s  %s  %s  %s  %s\n",
-		res.LatP50, res.LatP95, res.LatP99, res.LatP999, res.LatMax, res.LatMax)
+	fmt.Printf(" Latencies [p50, p95, p99, p99.9, max]\n")
+	fmt.Printf("           %s  %s  %s  %s  %s\n",
+		res.LatP50, res.LatP95, res.LatP99, res.LatP999, res.LatMax)
 	successPct := 0.0
 	if res.TotalReqs > 0 {
 		successPct = float64(res.TotalReqs-res.Errors) / float64(res.TotalReqs) * 100
@@ -204,8 +204,9 @@ func AskYNS(question, passLabel, failLabel string) types.Status {
 }
 
 func trunc(s string, max int) string {
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:max-1] + "…"
+	return string(runes[:max-1]) + "…"
 }

@@ -51,7 +51,7 @@ func (r RepairType) String() string {
 
 func AskMain() MainChoice {
 	report.PrintBanner()
-	fmt.Println("  What would you like to do?\n")
+	fmt.Print("  What would you like to do?\n\n")
 	fmt.Println("    1 › Full Computer Check  ← recommended for most cases")
 	fmt.Println("    2 › Stress Test Only     ← CPU & thermals")
 	fmt.Println("    3 › Network Test")
@@ -63,7 +63,7 @@ func AskMain() MainChoice {
 }
 
 func AskRepairType() RepairType {
-	fmt.Println("\n  Was any repair done on this unit?\n")
+	fmt.Print("\n  Was any repair done on this unit?\n\n")
 	fmt.Println("    1 › No repair — fresh intake")
 	fmt.Println("    2 › Screen / Display replaced")
 	fmt.Println("    3 › Motherboard replaced")
@@ -77,7 +77,7 @@ func AskRepairType() RepairType {
 }
 
 func AskStressTier() int {
-	fmt.Println("\n  Stress test type:\n")
+	fmt.Print("\n  Stress test type:\n\n")
 	fmt.Println("    1 › Quick check (20s)  — CPU load, fan spin, thermal baseline")
 	fmt.Println("    2 › Standard (60s)     — Recommended for most units")
 	fmt.Println("    3 › Heavy (120s)       — Post-motherboard or cooling repair")
@@ -88,7 +88,7 @@ func AskStressTier() int {
 }
 
 func AskLoadTestParams() (url, method string, rps int, duration string) {
-	fmt.Println("\n  HTTP Load Test\n")
+	fmt.Print("\n  HTTP Load Test\n\n")
 	fmt.Print("  Target URL: ")
 	fmt.Fscan(os.Stdin, &url)
 

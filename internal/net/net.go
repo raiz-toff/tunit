@@ -108,11 +108,16 @@ func parsePingOutput(out string) pingStats {
 				}
 			}
 		}
-		// Linux: "2 packets transmitted, 2 received, 0% packet loss"
-		if strings.Contains(lower, "packet loss") {
-			var loss float64
-			if _, err := fmt.Sscanf(line, "%*d packets transmitted, %*d received, %f%% packet loss", &loss); err == nil {
-				stats.loss = loss
+		// Linux: "10 packets transmitted, 8 received, 20% packet loss"
+		if strings.Contains(lower, "% packet loss") {
+			for _, field := range strings.Fields(line) {
+				if strings.HasSuffix(field, "%") {
+					var loss float64
+					if _, err := fmt.Sscanf(field, "%f%%", &loss); err == nil {
+						stats.loss = loss
+						break
+					}
+				}
 			}
 		}
 		// Windows: "Minimum = 4ms, Maximum = 9ms, Average = 6ms"

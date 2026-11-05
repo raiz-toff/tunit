@@ -324,17 +324,15 @@ func readRAMInfo() string {
 // ── interactive hardware actions (Linux) ───────────────────────
 
 func playTestTone() {
-	// Generate a brief tone via paplay/aplay if available
-	cmd := exec.Command("paplay", "--raw", "--rate=44100", "--channels=1", "/dev/urandom")
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		cmd.Process.Kill()
-	}()
-	// Fallback: use speaker-test for 1 second
-	out := exec.Command("speaker-test", "-t", "sine", "-f", "1000", "-l", "1")
-	out.Stdout = nil
-	out.Stderr = nil
-	out.Run()
+	cmd := exec.Command("speaker-test", "-t", "sine", "-f", "1000", "-l", "1")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	time.Sleep(1 * time.Second)
+	cmd.Process.Kill()
+	cmd.Wait()
 }
 
 func playMicTest() {

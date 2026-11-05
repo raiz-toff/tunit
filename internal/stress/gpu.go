@@ -100,10 +100,15 @@ func RunTier2(cfg Config) *types.StressResult {
 	cmd.Wait()
 
 	res.PeakTempC = peakTemp
+	fmt.Println("\n  Stress complete. Measuring cooldown (15s)...")
+	time.Sleep(15 * time.Second)
+	coolTemp := ReadCPUTemp()
+	res.CooldownDC = peakTemp - coolTemp
+	fmt.Printf("  Cooled to %.1f°C (dropped %.1f°C)\n", coolTemp, res.CooldownDC)
+
 	if cfg.FailTempC > 0 && peakTemp >= cfg.FailTempC {
 		res.Detail = fmt.Sprintf("CRITICAL: peak %.1f°C exceeded %.1f°C", peakTemp, cfg.FailTempC)
 	}
-	fmt.Println()
 	return res
 }
 

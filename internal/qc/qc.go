@@ -16,7 +16,7 @@ func Run(repair menu.RepairType, autoOnly bool) *types.QCResult {
 		Timestamp: time.Now(),
 	}
 
-	fmt.Println("\n  Running automated checks...\n")
+	fmt.Print("\n  Running automated checks...\n\n")
 
 	// Gather system identity first (serial, model, OS, CPU, RAM, BIOS)
 	populateIdentity(r)
@@ -74,7 +74,7 @@ func runInteractiveChecks(repair menu.RepairType) []types.CheckResult {
 	var results []types.CheckResult
 
 	fmt.Println("\n\033[1m  Human verification checks starting...\033[0m")
-	fmt.Println("  Answer Y (yes), N (no), or S (skip) for each.\n")
+	fmt.Print("  Answer Y (yes), N (no), or S (skip) for each.\n\n")
 
 	total := 6
 	step := 1
@@ -131,7 +131,7 @@ func runInteractiveChecks(repair menu.RepairType) []types.CheckResult {
 	// Keyboard
 	report.PrintStepHeader(step, total, "Keyboard Check")
 	fmt.Println("\n  Type each letter, number, and symbol shown.")
-	fmt.Println("  Press Escape or Enter when finished.\n")
+	fmt.Print("  Press Escape or Enter when finished.\n\n")
 	runKeyboardTest()
 	status = report.AskYNS(
 		"Did all keys register correctly with no stuck or missing keys?",
@@ -144,7 +144,7 @@ func runInteractiveChecks(repair menu.RepairType) []types.CheckResult {
 	// USB ports
 	report.PrintStepHeader(step, total, "USB Port Check")
 	fmt.Println("\n  Plug a USB device into each port one at a time.")
-	fmt.Println("  The tool will detect insertions automatically.\n")
+	fmt.Print("  The tool will detect insertions automatically.\n\n")
 	runUSBWatcher()
 	status = report.AskYNS(
 		"Did all USB ports detect the device when inserted?",

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -60,7 +61,7 @@ func runInteractiveMenu() error {
 			res := load.Run(load.Config{URL: url, Method: method, RPS: rps, Duration: d})
 			report.PrintLoadResult(res)
 		case menu.ChoiceLastReport:
-			fmt.Println("\n  Feature coming soon — reports saved as QC_REPORT_*.txt in current directory.\n")
+			fmt.Print("\n  Feature coming soon — reports saved as QC_REPORT_*.txt in current directory.\n\n")
 		}
 
 		fmt.Print("\n  Press ENTER to return to main menu, or Ctrl+C to exit...")
@@ -276,10 +277,9 @@ func cmdReport() *cobra.Command {
 }
 
 func splitHeader(h string) []string {
-	for i, c := range h {
-		if c == ':' {
-			return []string{h[:i], h[i+2:]}
-		}
+	i := strings.Index(h, ":")
+	if i < 0 {
+		return nil
 	}
-	return nil
+	return []string{strings.TrimSpace(h[:i]), strings.TrimSpace(h[i+1:])}
 }

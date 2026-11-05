@@ -9,9 +9,15 @@ import (
 	"github.com/tunit/tunit/internal/types"
 )
 
+func sanitizeFilename(s string) string {
+	r := strings.NewReplacer("/", "_", "\\", "_", "..", "_", " ", "_")
+	return r.Replace(s)
+}
+
 func SaveTextSlip(r *types.QCResult) (string, error) {
-	filename := fmt.Sprintf("QC_REPORT_%s_%s.txt", r.Serial, r.Timestamp.Format("20060102_150405"))
-	if r.Serial == "" || r.Serial == "Unknown" {
+	serial := sanitizeFilename(r.Serial)
+	filename := fmt.Sprintf("QC_REPORT_%s_%s.txt", serial, r.Timestamp.Format("20060102_150405"))
+	if serial == "" || strings.EqualFold(serial, "Unknown") {
 		filename = fmt.Sprintf("QC_REPORT_%s.txt", r.Timestamp.Format("20060102_150405"))
 	}
 

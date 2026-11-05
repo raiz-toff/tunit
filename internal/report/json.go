@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/tunit/tunit/internal/types"
 )
 
 func SaveJSON(r *types.QCResult) (string, error) {
-	filename := fmt.Sprintf("QC_REPORT_%s_%s.json", r.Serial, r.Timestamp.Format("20060102_150405"))
-	if r.Serial == "" || r.Serial == "Unknown" {
+	serial := sanitizeFilename(r.Serial)
+	filename := fmt.Sprintf("QC_REPORT_%s_%s.json", serial, r.Timestamp.Format("20060102_150405"))
+	if serial == "" || strings.EqualFold(serial, "Unknown") {
 		filename = fmt.Sprintf("QC_REPORT_%s.json", r.Timestamp.Format("20060102_150405"))
 	}
 
