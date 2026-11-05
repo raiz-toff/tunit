@@ -188,7 +188,7 @@ For programmatic use, the exit code (`$?`) is simpler: `0` = pass, `2` = fail.
 
 ```powershell
 # Install
-iex (iwr https://github.com/raiz-toff/tunit/releases/latest/download/tunit.ps1).Content
+irm https://github.com/raiz-toff/tunit/releases/latest/download/tunit.ps1 | iex
 
 # Run automated QC
 & tunit qc --auto

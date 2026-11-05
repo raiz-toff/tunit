@@ -1,17 +1,8 @@
-#Requires -Version 5.0
-<#
-.SYNOPSIS
-  Install tunit — universal system diagnostic, stress, and load testing tool.
-.DESCRIPTION
-  Downloads the tunit binary for Windows and installs it to C:\Program Files\tunit.
-  Usage: iex (iwr https://github.com/raiz-toff/tunit/releases/latest/download/tunit.ps1).Content
-#>
-
 $ErrorActionPreference = 'Stop'
 
-$repo    = 'raiz-toff/tunit'
-$asset   = 'tunit-windows-amd64.exe'
-$version = if ($env:TUNIT_VERSION) { $env:TUNIT_VERSION } else { 'latest' }
+$repo       = 'raiz-toff/tunit'
+$asset      = 'tunit-windows-amd64.exe'
+$version    = if ($env:TUNIT_VERSION) { $env:TUNIT_VERSION } else { 'latest' }
 $installDir = Join-Path $env:ProgramFiles 'tunit'
 
 if ($version -eq 'latest') {
@@ -21,7 +12,7 @@ if ($version -eq 'latest') {
 }
 
 Write-Host "Downloading tunit $version for Windows/amd64..." -ForegroundColor Cyan
-$tmp = Join-Path $env:TEMP "tunit-install-$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
+$tmp = Join-Path $env:TEMP "tunit-install-$((New-Guid).ToString('N').Substring(0,8)).exe"
 
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -32,12 +23,12 @@ try {
     exit 1
 }
 
-# Create install directory and move binary
 if (-not (Test-Path $installDir)) {
     try {
         New-Item -ItemType Directory -Path $installDir -Force | Out-Null
     } catch {
-        Write-Host "Cannot create $installDir — try running as Administrator." -ForegroundColor Red
+        Write-Host "Cannot create $installDir - run PowerShell as Administrator." -ForegroundColor Red
+        Remove-Item $tmp -ErrorAction SilentlyContinue
         exit 1
     }
 }
@@ -45,7 +36,6 @@ if (-not (Test-Path $installDir)) {
 $dest = Join-Path $installDir 'tunit.exe'
 Move-Item -Path $tmp -Destination $dest -Force
 
-# Add to PATH if not already there
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if ($machinePath -notlike "*$installDir*") {
     try {
@@ -53,7 +43,7 @@ if ($machinePath -notlike "*$installDir*") {
         $env:Path = "$env:Path;$installDir"
         Write-Host "Added $installDir to system PATH." -ForegroundColor Green
     } catch {
-        Write-Host "Could not add to PATH — try running as Administrator, or add manually:" -ForegroundColor Yellow
+        Write-Host "Could not add to PATH - run as Administrator, or add manually:" -ForegroundColor Yellow
         Write-Host "  $installDir" -ForegroundColor Yellow
     }
 }

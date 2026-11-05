@@ -11,8 +11,8 @@ curl -fsSL https://github.com/raiz-toff/tunit/releases/latest/download/install.s
 ```
 
 ```powershell
-# Windows (PowerShell)
-iex (iwr https://github.com/raiz-toff/tunit/releases/latest/download/tunit.ps1).Content
+# Windows (PowerShell — run as Administrator)
+irm https://github.com/raiz-toff/tunit/releases/latest/download/tunit.ps1 | iex
 ```
 
 Then just run:
