@@ -48,5 +48,8 @@ if ($machinePath -notlike "*$installDir*") {
     }
 }
 
+Write-Host ""
 Write-Host "Installed: $dest" -ForegroundColor Green
-Write-Host "Run: tunit" -ForegroundColor Cyan
+Write-Host ""
+
+& $dest

@@ -43,5 +43,8 @@ else
   sudo mv "$TMP/tunit" "$BIN_DIR/tunit"
 fi
 
-echo "Installed: $(command -v tunit)"
-echo "Run: tunit"
+echo ""
+echo "✓ Installed: $(command -v tunit)"
+echo ""
+
+exec tunit "$@"
