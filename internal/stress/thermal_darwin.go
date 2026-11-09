@@ -48,3 +48,8 @@ func readCurFreqMHz() int64 {
 	n, _ := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
 	return n / 1_000_000
 }
+
+// tempHint tells the technician why no CPU temperature was readable on macOS.
+func tempHint() string {
+	return "powermetrics needs root for SMC readings — run: sudo tunit stress"
+}

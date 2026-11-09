@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,7 +148,9 @@ func measureDNS() float64 {
 }
 
 func tcpProbe(host string, port int) (bool, time.Duration) {
-	addr := fmt.Sprintf("%s:%d", host, port)
+	// net.JoinHostPort brackets IPv6 literals correctly (e.g. [::1]:53),
+	// which "%s:%d" does not.
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	lat := time.Since(start)

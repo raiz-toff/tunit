@@ -1,10 +1,13 @@
 package menu
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
+	"github.com/tunit/tunit/internal/cleanup"
 	"github.com/tunit/tunit/internal/report"
 )
 
@@ -121,6 +124,19 @@ func askNumber(prompt string, min, max int) int {
 		if err == nil && n >= min && n <= max {
 			return n
 		}
-		fmt.Printf("  Please enter a number between %d and %d: ", min, max)
+		if errors.Is(err, io.EOF) {
+			// No interactive input (piped or closed stdin). Clean up and exit
+			// rather than spin forever reprinting the prompt.
+			fmt.Println("\n  No input available — exiting.")
+			if s := cleanup.Current(); s != nil {
+				s.Close()
+			}
+			os.Exit(0)
+		}
+		// Non-numeric token: consume it so the next read advances instead of
+		// re-failing on the same bad input.
+		var discard string
+		_, _ = fmt.Fscan(os.Stdin, &discard)
+		fmt.Printf("  Please enter a number between %d and %d.\n", min, max)
 	}
 }

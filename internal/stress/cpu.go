@@ -19,9 +19,20 @@ type Config struct {
 func RunTier1(cfg Config) *types.StressResult {
 	res := &types.StressResult{Tier: 1, Duration: cfg.Duration}
 
-	// Measure idle temp before we start
+	// Measure idle temp before we start. A reading of 0 means no sensor is
+	// readable on this machine; the load still runs, but thermal numbers would
+	// be meaningless, so we say so instead of printing a fake 0.0°C.
 	res.IdleTempC = ReadCPUTemp()
-	fmt.Printf("  Idle temperature: %.1f°C\n", res.IdleTempC)
+	res.TempAvailable = res.IdleTempC > 0
+	if res.TempAvailable {
+		fmt.Printf("  Idle temperature: %.1f°C\n", res.IdleTempC)
+	} else {
+		res.SensorHint = tempHint()
+		fmt.Printf("  \033[33m—\033[0m CPU temperature sensor unavailable; load will run without thermal data.\n")
+		if res.SensorHint != "" {
+			fmt.Printf("    %s\n", res.SensorHint)
+		}
+	}
 	fmt.Printf("  Starting %s CPU stress across %d cores...\n", cfg.Duration.Round(time.Second), runtime.NumCPU())
 
 	ncpu := runtime.NumCPU()
@@ -44,6 +55,7 @@ func RunTier1(cfg Config) *types.StressResult {
 	defer tick.Stop()
 
 	baseFreq := readBaseFreqMHz()
+	res.ThrottleKnown = baseFreq > 0 // false e.g. on Apple Silicon
 	throttled := false
 
 	for range tick.C {
@@ -60,6 +72,11 @@ func RunTier1(cfg Config) *types.StressResult {
 		if baseFreq > 0 && cur > 0 && cur < int64(float64(baseFreq)*0.9) {
 			throttled = true
 		}
+		if !res.TempAvailable {
+			// No sensor: show the load is running without a misleading 0.0°C.
+			fmt.Printf("\r  Running CPU load across %d cores... (no thermal sensor)", runtime.NumCPU())
+			continue
+		}
 		col := "\033[32m"
 		if t > cfg.WarnTempC {
 			col = "\033[33m"
@@ -73,12 +90,18 @@ func RunTier1(cfg Config) *types.StressResult {
 
 	res.PeakTempC = peakTemp
 	res.Throttled = throttled
-	fmt.Println("\n  Stress complete. Measuring cooldown (15s)...")
 
-	time.Sleep(15 * time.Second)
-	coolTemp := ReadCPUTemp()
-	res.CooldownDC = peakTemp - coolTemp
-	fmt.Printf("  Cooled to %.1f°C (dropped %.1f°C)\n", coolTemp, res.CooldownDC)
+	// Cooldown only means something if we can actually read temperature.
+	if res.TempAvailable {
+		fmt.Println("\n  Stress complete. Measuring cooldown (15s)...")
+		time.Sleep(15 * time.Second)
+		coolTemp := ReadCPUTemp()
+		res.CooldownDC = peakTemp - coolTemp
+		fmt.Printf("  Cooled to %.1f°C (dropped %.1f°C)\n", coolTemp, res.CooldownDC)
+	} else {
+		fmt.Println("\n  Stress complete (no thermal data captured).")
+		return res
+	}
 
 	if cfg.FailTempC > 0 && peakTemp >= cfg.FailTempC {
 		res.Detail = fmt.Sprintf("CRITICAL: peak %.1f°C exceeded fail threshold %.1f°C", peakTemp, cfg.FailTempC)

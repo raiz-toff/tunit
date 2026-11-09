@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,14 +15,33 @@ func sanitizeFilename(s string) string {
 	return r.Replace(s)
 }
 
-func SaveTextSlip(r *types.QCResult) (string, error) {
+// reportFilename builds the QC report's base filename from the serial and
+// timestamp, falling back to a timestamp-only name when the serial is empty.
+func reportFilename(r *types.QCResult) string {
 	serial := sanitizeFilename(r.Serial)
-	filename := fmt.Sprintf("QC_REPORT_%s_%s.txt", serial, r.Timestamp.Format("20060102_150405"))
 	if serial == "" || strings.EqualFold(serial, "Unknown") {
-		filename = fmt.Sprintf("QC_REPORT_%s.txt", r.Timestamp.Format("20060102_150405"))
+		return fmt.Sprintf("QC_REPORT_%s.txt", r.Timestamp.Format("20060102_150405"))
+	}
+	return fmt.Sprintf("QC_REPORT_%s_%s.txt", serial, r.Timestamp.Format("20060102_150405"))
+}
+
+// SaveTextSlip writes the report to the current directory and returns its
+// filename. Retained for the CI/automation path and existing callers.
+func SaveTextSlip(r *types.QCResult) (string, error) {
+	return SaveTextSlipTo(r, ".")
+}
+
+// SaveTextSlipTo writes the report into dir and returns the full path. The
+// bench/interactive path passes the session temp dir so the file is removed
+// when tunit exits, leaving no report on the serviced machine.
+func SaveTextSlipTo(r *types.QCResult, dir string) (string, error) {
+	name := reportFilename(r)
+	path := name
+	if dir != "" && dir != "." {
+		path = filepath.Join(dir, name)
 	}
 
-	f, err := os.Create(filename)
+	f, err := os.Create(path)
 	if err != nil {
 		return "", err
 	}
@@ -63,5 +83,5 @@ func SaveTextSlip(r *types.QCResult) (string, error) {
 	w("QC TESTER: _______________________________")
 	w(sep)
 
-	return filename, nil
+	return path, nil
 }

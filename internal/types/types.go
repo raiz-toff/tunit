@@ -59,6 +59,15 @@ type StressResult struct {
 	Throttled  bool
 	CooldownDC float64 // degrees dropped in 15s after stress
 	Detail     string
+	// TempAvailable is false when no CPU temperature sensor could be read
+	// (e.g. macOS without root, laptops with no WMI thermal zone). When false,
+	// the temperature fields are not meaningful and should not be reported.
+	TempAvailable bool
+	// ThrottleKnown is false when CPU frequency could not be read (e.g. Apple
+	// Silicon), so a "not throttled" result cannot be trusted either way.
+	ThrottleKnown bool
+	// SensorHint carries platform-specific advice when sensors are missing.
+	SensorHint string
 }
 
 type LoadResult struct {
