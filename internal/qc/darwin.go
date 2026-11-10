@@ -3,13 +3,13 @@
 package qc
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/tunit/tunit/internal/cleanup"
 	"github.com/tunit/tunit/internal/types"
 )
 
@@ -220,69 +220,70 @@ func ioregKey(key string) (string, error) {
 
 // ── interactive hardware actions (macOS) ───────────────────────
 
+func probeCapabilities() capabilities {
+	var c capabilities
+	// afplay ships with every macOS install.
+	c.audioPlay = capability{ok: true, tool: "afplay"}
+	if t, ok := lookTools("sox", "ffmpeg"); ok {
+		c.audioRecord = capability{ok: true, tool: t}
+	} else {
+		c.audioRecord = capability{hint: "brew install sox (or ffmpeg) for mic capture"}
+	}
+	// ffmpeg gives the terminal preview; Photo Booth is the GUI fallback and
+	// is present on stock macOS, so the webcam check can always run.
+	if t, ok := lookTools("ffmpeg"); ok {
+		c.camera = capability{ok: true, tool: t}
+	} else {
+		c.camera = capability{ok: true, tool: "Photo Booth (GUI fallback)"}
+	}
+	return c
+}
+
 func playTestTone() {
+	tmp := cleanup.TempPathFor("stereo_test.wav")
+	if err := generateTestWAV(tmp); err == nil {
+		exec.Command("afplay", tmp).Run()
+		os.Remove(tmp)
+		return
+	}
 	exec.Command("afplay", "/System/Library/Sounds/Ping.aiff").Run()
-	time.Sleep(500 * time.Millisecond)
-	exec.Command("afplay", "/System/Library/Sounds/Pop.aiff").Run()
 }
 
 func playMicTest() {
-	tmp := "/tmp/tunit_mic_test.aiff"
-	exec.Command("sox", "-d", "-t", "aiff", tmp, "trim", "0", "3").Run()
+	tmp := cleanup.TempPathFor("mic_test.wav")
+	// Use sox if available, otherwise ffmpeg
+	if _, err := exec.LookPath("sox"); err == nil {
+		exec.Command("sox", "-d", "-r", "44100", "-c", "1", tmp, "trim", "0", "3").Run()
+	} else {
+		exec.Command("ffmpeg", "-y", "-f", "avfoundation", "-i", ":0", "-t", "3", tmp).Run()
+	}
 	exec.Command("afplay", tmp).Run()
 	os.Remove(tmp)
 }
 
 func openCameraPreview() {
-	exec.Command("open", "-a", "Photo Booth").Run()
-	time.Sleep(3 * time.Second)
-	exec.Command("osascript", "-e", `tell application "Photo Booth" to quit`).Run()
+	err := terminalCameraPreview(
+		[]string{"-f", "avfoundation", "-framerate", "15", "-video_size", "320x240", "-i", "0"},
+		5*time.Second,
+	)
+	if err != nil {
+		exec.Command("open", "-a", "Photo Booth").Run()
+		time.Sleep(5 * time.Second)
+		exec.Command("osascript", "-e", `tell application "Photo Booth" to quit`).Run()
+	}
 }
 
 func runScreenTest() {
-	colors := []string{"white", "black", "red", "green", "blue"}
-	for _, c := range colors {
-		script := fmt.Sprintf(`tell application "System Events" to set background color of first desktop to {%s}`, colorToRGB(c))
-		exec.Command("osascript", "-e", script).Run()
-		fmt.Printf("  Screen: %s — press ENTER...", c)
-		fmt.Scanln()
-	}
+	fullScreenColorTest()
 }
 
-func colorToRGB(name string) string {
-	switch name {
-	case "white":
-		return "65535, 65535, 65535"
-	case "black":
-		return "0, 0, 0"
-	case "red":
-		return "65535, 0, 0"
-	case "green":
-		return "0, 65535, 0"
-	case "blue":
-		return "0, 0, 65535"
-	}
-	return "32768, 32768, 32768"
-}
-
-func runKeyboardTest() {
-	fmt.Println("  Type freely. Press Enter twice when done.")
-	reader := bufio.NewReader(os.Stdin)
-	emptyCount := 0
-	for emptyCount < 2 {
-		line, _ := reader.ReadString('\n')
-		if strings.TrimSpace(line) == "" {
-			emptyCount++
-		} else {
-			emptyCount = 0
-			fmt.Printf("  Got: %q\n", strings.TrimSpace(line))
-		}
-	}
+func runKeyboardTest() int {
+	return runVisualKeyboardTest()
 }
 
 func runUSBWatcher() {
-	fmt.Println("  Watching for USB insertions for 15 seconds...")
-	fmt.Println("  Insert devices now. Press ENTER to stop early.")
+	timeout := 30 * time.Second
+	start := time.Now()
 
 	done := make(chan struct{})
 	go func() {
@@ -290,12 +291,27 @@ func runUSBWatcher() {
 		close(done)
 	}()
 
-	timer := time.NewTimer(15 * time.Second)
+	fmt.Print("\033[?25l")
+	defer fmt.Print("\033[?25h\033[0m")
+
+	timer := time.NewTimer(timeout)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	defer timer.Stop()
 
 	seen := map[string]bool{}
+	var devices []usbDevice
+
+	// Snapshot existing devices
+	out, _ := exec.Command("system_profiler", "SPUSBDataType").Output()
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "Product ID:") {
+			seen[strings.TrimSpace(line)] = true
+		}
+	}
+
+	renderUSBDisplay(devices, 0, timeout)
+
 	for {
 		select {
 		case <-done:
@@ -309,10 +325,11 @@ func runUSBWatcher() {
 					dev := strings.TrimSpace(line)
 					if !seen[dev] {
 						seen[dev] = true
-						fmt.Printf("  ✓ USB detected: %s\n", dev)
+						devices = append(devices, usbDevice{name: dev, when: time.Now()})
 					}
 				}
 			}
+			renderUSBDisplay(devices, time.Since(start), timeout)
 		}
 	}
 }

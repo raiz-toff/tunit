@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tunit/tunit/internal/cleanup"
 	"github.com/tunit/tunit/internal/load"
 	"github.com/tunit/tunit/internal/lookup"
 	"github.com/tunit/tunit/internal/menu"
@@ -17,11 +19,28 @@ import (
 	"github.com/tunit/tunit/internal/types"
 )
 
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
+// exit cleans up the session, then exits with the given code. Use this instead
+// of os.Exit anywhere after the session is created, so transient files are
+// never left behind on a non-zero exit path.
+func exit(code int) {
+	if s := cleanup.Current(); s != nil {
+		s.Close()
+	}
+	os.Exit(code)
+}
+
 func main() {
+	sess := cleanup.New()
+	defer sess.Close()
+
 	root := &cobra.Command{
-		Use:   "tunit",
-		Short: "Universal system diagnostic, stress, and load testing tool",
-		Long:  "Run with no arguments to launch the interactive guided menu.",
+		Use:     "tunit",
+		Short:   "Universal system diagnostic, stress, and load testing tool",
+		Long:    "Run with no arguments to launch the interactive guided menu.",
+		Version: version,
 		// No args → interactive menu
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInteractiveMenu()
@@ -32,7 +51,7 @@ func main() {
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		exit(1)
 	}
 }
 
@@ -45,7 +64,7 @@ func runInteractiveMenu() error {
 		case menu.ChoiceFullQC:
 			repair := menu.AskRepairType()
 			result := runQC(repair, false, false)
-			saveAndPrint(result)
+			saveAndPrint(result, false) // bench: no file left behind
 		case menu.ChoiceStress:
 			tier := menu.AskStressTier()
 			runStressInteractive(tier)
@@ -61,7 +80,8 @@ func runInteractiveMenu() error {
 			res := load.Run(load.Config{URL: url, Method: method, RPS: rps, Duration: d})
 			report.PrintLoadResult(res)
 		case menu.ChoiceLastReport:
-			fmt.Print("\n  Feature coming soon — reports saved as QC_REPORT_*.txt in current directory.\n\n")
+			fmt.Println()
+			listReports()
 		}
 
 		fmt.Print("\n  Press ENTER to return to main menu, or Ctrl+C to exit...")
@@ -85,10 +105,28 @@ func runQC(repair menu.RepairType, autoOnly, doLookup bool) *types.QCResult {
 	return r
 }
 
-func saveAndPrint(r *types.QCResult) {
+// saveAndPrint shows the report on screen, then saves it.
+//
+// persist=true (CI / `qc --auto`) writes QC_REPORT_*.txt to the working
+// directory as a durable artifact. persist=false (bench / interactive) writes
+// it into the session temp dir, which is removed on exit — so the full result
+// is shown on screen but nothing is left on the serviced machine.
+func saveAndPrint(r *types.QCResult, persist bool) {
 	report.PrintQCReport(r)
-	if fname, err := report.SaveTextSlip(r); err == nil {
-		fmt.Printf("  Saved: %s\n", fname)
+
+	if persist {
+		if fname, err := report.SaveTextSlip(r); err == nil {
+			fmt.Printf("  Saved: %s\n", fname)
+		}
+		return
+	}
+
+	dir := "."
+	if s := cleanup.Current(); s != nil && s.Dir() != "" {
+		dir = s.Dir()
+	}
+	if _, err := report.SaveTextSlipTo(r, dir); err == nil {
+		fmt.Println("  Report shown above — no file left on this machine.")
 	}
 }
 
@@ -137,9 +175,11 @@ func cmdQC() *cobra.Command {
 				repair = menu.RepairKeyboard
 			}
 			r := runQC(repair, autoOnly, doLookup)
-			saveAndPrint(r)
+			// Persist the report only in automation mode (--auto), where the
+			// file is a wanted artifact. Interactive CLI use stays trace-free.
+			saveAndPrint(r, autoOnly)
 			if r.Verdict == types.StatusFail {
-				os.Exit(2)
+				exit(2)
 			}
 			return nil
 		},
@@ -255,25 +295,51 @@ func cmdReport() *cobra.Command {
 		Use:   "report",
 		Short: "List saved QC reports in current directory",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			entries, err := os.ReadDir(".")
-			if err != nil {
-				return err
-			}
-			found := false
-			for _, e := range entries {
-				if !e.IsDir() && len(e.Name()) > 10 &&
-					e.Name()[:10] == "QC_REPORT_" {
-					info, _ := e.Info()
-					fmt.Printf("  %s  (%s)\n", e.Name(), info.ModTime().Format("2006-01-02 15:04"))
-					found = true
-				}
-			}
-			if !found {
-				fmt.Println("  No QC reports found in current directory.")
-			}
+			listReports()
 			return nil
 		},
 	}
+}
+
+// listReports prints the QC reports saved in the current directory, newest
+// first. Shared by the `report` subcommand and the menu's View Last Report.
+func listReports() {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		fmt.Printf("  Could not read current directory: %v\n", err)
+		return
+	}
+	type rep struct {
+		name string
+		mod  time.Time
+	}
+	var reports []rep
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), "QC_REPORT_") {
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			reports = append(reports, rep{e.Name(), info.ModTime()})
+		}
+	}
+	if len(reports) == 0 {
+		fmt.Println("  No QC reports found in current directory.")
+		return
+	}
+	sort.Slice(reports, func(i, j int) bool { return reports[i].mod.After(reports[j].mod) })
+	fmt.Printf("  %d report(s) in %s:\n\n", len(reports), mustGetwd())
+	for _, r := range reports {
+		fmt.Printf("    %s  (%s)\n", r.name, r.mod.Format("2006-01-02 15:04"))
+	}
+	fmt.Println()
+}
+
+func mustGetwd() string {
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+	return "."
 }
 
 func splitHeader(h string) []string {

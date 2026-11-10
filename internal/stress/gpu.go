@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/tunit/tunit/internal/cleanup"
 	"github.com/tunit/tunit/internal/types"
 )
 
@@ -20,13 +21,20 @@ const (
 
 func RunTier2(cfg Config) *types.StressResult {
 	res := &types.StressResult{Tier: 2, Duration: cfg.Duration}
-	tmpDir := filepath.Join(os.TempDir(), "tunit_stress")
 
+	// Prefer the session temp dir so an interrupted download is still cleaned
+	// up; fall back to a tracked OS-temp dir when running without a session.
+	var tmpDir string
+	if s := cleanup.Current(); s != nil && s.Dir() != "" {
+		tmpDir = filepath.Join(s.Dir(), "stress")
+	} else {
+		tmpDir = filepath.Join(os.TempDir(), "tunit_stress")
+		defer os.RemoveAll(tmpDir)
+	}
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
 		res.Detail = "Could not create temp dir: " + err.Error()
 		return res
 	}
-	defer os.RemoveAll(tmpDir)
 
 	fmt.Println("  Downloading GPU stress tool...")
 
@@ -54,7 +62,13 @@ func RunTier2(cfg Config) *types.StressResult {
 	}
 
 	res.IdleTempC = ReadCPUTemp()
-	fmt.Printf("  Idle GPU temp (CPU proxy): %.1f°C\n", res.IdleTempC)
+	res.TempAvailable = res.IdleTempC > 0
+	if res.TempAvailable {
+		fmt.Printf("  Idle GPU temp (CPU proxy): %.1f°C\n", res.IdleTempC)
+	} else {
+		res.SensorHint = tempHint()
+		fmt.Printf("  \033[33m—\033[0m Temperature sensor unavailable; GPU load will run without thermal data.\n")
+	}
 	fmt.Printf("  Running GPU stress for %s...\n", cfg.Duration.Round(time.Second))
 
 	var cmd *exec.Cmd

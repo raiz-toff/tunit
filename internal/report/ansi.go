@@ -1,7 +1,9 @@
 package report
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -82,7 +84,8 @@ func PrintQCReport(r *types.QCResult) {
 
 	verdictColor := statusColor(r.Verdict)
 	fmt.Printf("%s OVERALL VERDICT: %s%s%s%s\n", colorBold, verdictColor, r.Verdict.String(), colorReset, colorReset)
-	fmt.Printf(" Report saved: QC_REPORT_%s_%s.txt\n", r.Serial, r.Timestamp.Format("20060102_150405"))
+	// The authoritative saved path is printed by the caller after SaveTextSlip;
+	// don't guess a filename here (it mismatched when the serial was empty).
 	fmt.Printf("%s%s%s\n\n", colorBold, line, colorReset)
 }
 
@@ -91,11 +94,26 @@ func PrintStressResult(res *types.StressResult) {
 	fmt.Printf("\n%s STRESS TEST — TIER %d%s\n", colorBold, res.Tier, colorReset)
 	fmt.Printf("%s\n", divider)
 	fmt.Printf(" Duration  : %s\n", res.Duration.Round(time.Second))
+
+	if !res.TempAvailable {
+		// No readable sensor: don't print fake 0.0°C numbers or a throttle
+		// verdict that can't be trusted.
+		fmt.Printf(" Temps     : %sunavailable on this hardware%s\n", colorYellow, colorReset)
+		if res.SensorHint != "" {
+			fmt.Printf(" Note      : %s\n", res.SensorHint)
+		}
+		fmt.Printf("%s\n\n", divider)
+		return
+	}
+
 	fmt.Printf(" Idle temp : %.1f°C\n", res.IdleTempC)
 	fmt.Printf(" Peak temp : %.1f°C\n", res.PeakTempC)
-	if res.Throttled {
+	switch {
+	case res.Throttled:
 		fmt.Printf(" Throttled : %sYES — clock dropped during load%s\n", colorRed, colorReset)
-	} else {
+	case !res.ThrottleKnown:
+		fmt.Printf(" Throttled : %sunknown (CPU frequency not readable)%s\n", colorYellow, colorReset)
+	default:
 		fmt.Printf(" Throttled : %sNo%s\n", colorGreen, colorReset)
 	}
 	if res.CooldownDC > 0 {
@@ -187,9 +205,13 @@ func AskYNS(question, passLabel, failLabel string) types.Status {
 	fmt.Printf("    %sS%s → Skip                    %s[SKIP]%s\n", colorBold, colorReset, colorDim, colorReset)
 	fmt.Printf("\n  Enter Y / N / S: ")
 
-	var input string
 	for {
-		fmt.Fscan(os.Stdin, &input)
+		var input string
+		_, err := fmt.Fscan(os.Stdin, &input)
+		if errors.Is(err, io.EOF) {
+			// Unattended run: skip rather than loop or falsely pass.
+			return types.StatusSkip
+		}
 		switch strings.ToUpper(strings.TrimSpace(input)) {
 		case "Y", "YES":
 			return types.StatusPass

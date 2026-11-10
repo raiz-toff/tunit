@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tunit/tunit/internal/cleanup"
 	"github.com/tunit/tunit/internal/types"
 )
 
@@ -80,27 +81,62 @@ func checkBattery() (types.Status, string, string) {
 	return types.StatusPass, detail, ""
 }
 
+// checkDrivers parses `lspci -k` device blocks and flags the real problem
+// case: a device that has a kernel module available but no driver currently
+// bound ("Kernel modules:" present, "Kernel driver in use:" absent). Devices
+// with no module at all (host bridges, etc.) are expected and ignored, which
+// keeps false positives down.
 func checkDrivers() (types.Status, string, string) {
-	out, err := exec.Command("lspci", "-v").Output()
+	out, err := exec.Command("lspci", "-k").Output()
 	if err != nil {
 		return types.StatusSkip, "lspci not available", ""
 	}
-	lines := strings.Split(string(out), "\n")
-	missing := 0
-	for _, l := range lines {
-		if strings.Contains(l, "Kernel driver in use") == false &&
-			strings.Contains(l, "Subsystem:") &&
-			!strings.Contains(l, "Kernel modules:") {
-			// not conclusive without more parsing — just count devices with no kernel driver
-		}
-		if strings.Contains(strings.ToLower(l), "unknown") {
-			missing++
+
+	var unbound []string
+	var name string
+	var hasDriver, hasModules bool
+
+	flush := func() {
+		if name != "" && hasModules && !hasDriver {
+			unbound = append(unbound, name)
 		}
 	}
-	if missing > 0 {
-		return types.StatusWarn, fmt.Sprintf("%d device(s) may lack drivers", missing), ""
+
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == "" {
+			continue
+		}
+		if line[0] != ' ' && line[0] != '\t' {
+			// New device block begins; finalize the previous one.
+			flush()
+			name = line
+			hasDriver, hasModules = false, false
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "Kernel driver in use:"):
+			hasDriver = true
+		case strings.HasPrefix(trimmed, "Kernel modules:"):
+			hasModules = true
+		}
 	}
-	return types.StatusPass, "No driver errors detected", ""
+	flush()
+
+	if len(unbound) == 0 {
+		return types.StatusPass, "All devices have drivers bound", ""
+	}
+	// Shorten device descriptions for the warning detail.
+	short := make([]string, 0, len(unbound))
+	for _, d := range unbound {
+		if i := strings.Index(d, ": "); i >= 0 && i+2 < len(d) {
+			d = d[i+2:]
+		}
+		short = append(short, d)
+	}
+	return types.StatusWarn,
+		fmt.Sprintf("%d device(s) with no driver loaded", len(unbound)),
+		strings.Join(short, "; ")
 }
 
 func checkDisk() (types.Status, string, string) {
@@ -323,78 +359,79 @@ func readRAMInfo() string {
 
 // ── interactive hardware actions (Linux) ───────────────────────
 
+func probeCapabilities() capabilities {
+	var c capabilities
+	if t, ok := lookTools("aplay", "paplay", "speaker-test"); ok {
+		c.audioPlay = capability{ok: true, tool: t}
+	} else {
+		c.audioPlay = capability{hint: "install alsa-utils (provides aplay)"}
+	}
+	if t, ok := lookTools("arecord", "ffmpeg"); ok {
+		c.audioRecord = capability{ok: true, tool: t}
+	} else {
+		c.audioRecord = capability{hint: "install alsa-utils (provides arecord) or ffmpeg"}
+	}
+	if t, ok := lookTools("ffmpeg", "ffplay"); ok {
+		c.camera = capability{ok: true, tool: t}
+	} else {
+		c.camera = capability{hint: "install ffmpeg (for terminal or window preview)"}
+	}
+	return c
+}
+
 func playTestTone() {
-	cmd := exec.Command("speaker-test", "-t", "sine", "-f", "1000", "-l", "1")
+	tmp := cleanup.TempPathFor("stereo_test.wav")
+	if err := generateTestWAV(tmp); err == nil {
+		exec.Command("aplay", tmp).Run()
+		os.Remove(tmp)
+		return
+	}
+	// Fallback: speaker-test channel sweep
+	cmd := exec.Command("speaker-test", "-t", "wav", "-c", "2", "-l", "1")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
 		return
 	}
-	time.Sleep(1 * time.Second)
+	time.Sleep(5 * time.Second)
 	cmd.Process.Kill()
 	cmd.Wait()
 }
 
 func playMicTest() {
-	// Record 3s then play back
-	tmp := "/tmp/tunit_mic_test.wav"
-	rec := exec.Command("arecord", "-d", "3", "-f", "cd", tmp)
-	rec.Stdout = nil
-	rec.Stderr = nil
+	tmp := cleanup.TempPathFor("mic_test.wav")
+	rec := exec.Command("arecord", "-d", "3", "-f", "cd", "-q", tmp)
 	rec.Run()
-	play := exec.Command("aplay", tmp)
-	play.Stdout = nil
-	play.Stderr = nil
-	play.Run()
+	exec.Command("aplay", "-q", tmp).Run()
 	os.Remove(tmp)
 }
 
 func openCameraPreview() {
-	// Try ffplay for 3 seconds, suppress output
-	cmd := exec.Command("ffplay", "-f", "v4l2", "-i", "/dev/video0", "-vf", "scale=640:480", "-t", "3", "-autoexit")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.Run()
+	err := terminalCameraPreview(
+		[]string{"-f", "v4l2", "-video_size", "320x240", "-i", "/dev/video0"},
+		5*time.Second,
+	)
+	if err != nil {
+		// Fallback to ffplay window
+		cmd := exec.Command("ffplay", "-f", "v4l2", "-i", "/dev/video0",
+			"-vf", "scale=640:480", "-t", "5", "-autoexit")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.Run()
+	}
 }
 
 func runScreenTest() {
-	// Use clear + printf to flash full color screens in the terminal
-	colors := []struct {
-		name string
-		ansi string
-	}{
-		{"WHITE", "\033[47m"},
-		{"BLACK", "\033[40m"},
-		{"RED", "\033[41m"},
-		{"GREEN", "\033[42m"},
-		{"BLUE", "\033[44m"},
-	}
-	for _, c := range colors {
-		fmt.Printf("\033[2J\033[H%s%s                                        DEAD PIXEL TEST — %s\n\n  Press ENTER to continue...\033[0m", c.ansi, strings.Repeat(" ", 0), c.name)
-		fmt.Scanln()
-	}
-	fmt.Print("\033[2J\033[H")
+	fullScreenColorTest()
 }
 
-func runKeyboardTest() {
-	fmt.Println("  Type freely. Press Enter twice when done.")
-	fmt.Println("  ─────────────────────────────────────────")
-	reader := bufio.NewReader(os.Stdin)
-	emptyCount := 0
-	for emptyCount < 2 {
-		line, _ := reader.ReadString('\n')
-		if strings.TrimSpace(line) == "" {
-			emptyCount++
-		} else {
-			emptyCount = 0
-			fmt.Printf("  Got: %q\n", strings.TrimSpace(line))
-		}
-	}
+func runKeyboardTest() int {
+	return runVisualKeyboardTest()
 }
 
 func runUSBWatcher() {
-	fmt.Println("  Watching for USB insertions for 15 seconds...")
-	fmt.Println("  Insert devices now. Press ENTER to stop early.")
+	timeout := 30 * time.Second
+	start := time.Now()
 
 	done := make(chan struct{})
 	go func() {
@@ -402,12 +439,28 @@ func runUSBWatcher() {
 		close(done)
 	}()
 
-	timer := time.NewTimer(15 * time.Second)
+	fmt.Print("\033[?25l") // hide cursor
+	defer fmt.Print("\033[?25h\033[0m")
+
+	timer := time.NewTimer(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	defer timer.Stop()
 
 	seen := map[string]bool{}
+	var devices []usbDevice
+
+	// Snapshot current devices so we only show NEW ones
+	dirs, _ := filepath.Glob("/sys/bus/usb/devices/*/product")
+	for _, d := range dirs {
+		prod := strings.TrimSpace(readSysFile(d))
+		if prod != "" {
+			seen[prod] = true
+		}
+	}
+
+	renderUSBDisplay(devices, 0, timeout)
+
 	for {
 		select {
 		case <-done:
@@ -420,9 +473,10 @@ func runUSBWatcher() {
 				prod := strings.TrimSpace(readSysFile(d))
 				if prod != "" && !seen[prod] {
 					seen[prod] = true
-					fmt.Printf("  ✓ USB detected: %s\n", prod)
+					devices = append(devices, usbDevice{name: prod, when: time.Now()})
 				}
 			}
+			renderUSBDisplay(devices, time.Since(start), timeout)
 		}
 	}
 }

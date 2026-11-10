@@ -43,3 +43,8 @@ func readCurFreqMHz() int64 {
 	n, _ := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
 	return n
 }
+
+// tempHint tells the technician why no CPU temperature was readable on Windows.
+func tempHint() string {
+	return "Many laptops don't expose MSAcpi_ThermalZoneTemperature via WMI; temperature is unavailable without a vendor driver."
+}

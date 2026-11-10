@@ -3,14 +3,15 @@
 package qc
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/tunit/tunit/internal/cleanup"
 	"github.com/tunit/tunit/internal/types"
 )
 
@@ -29,6 +30,20 @@ func psJSON(script string, v any) error {
 		return err
 	}
 	return json.Unmarshal([]byte(out), v)
+}
+
+// psInt runs a PowerShell snippet and parses its output as an integer,
+// returning 0 when the query fails or the value is empty/non-numeric.
+func psInt(script string) int {
+	out, err := psQuery(script)
+	if err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func populateIdentity(r *types.QCResult) {
@@ -100,24 +115,27 @@ func checkSerial() (types.Status, string, string) {
 }
 
 func checkBattery() (types.Status, string, string) {
-	type batInfo struct {
-		Status        int
+	// Charge % and status come from Win32_Battery. True capacity (needed for a
+	// health %) lives in the root\wmi battery classes — Win32_Battery itself
+	// almost always reports those fields as null, which is why the old single
+	// query never produced a health number.
+	var bat struct {
+		Status          int
 		EstimatedCharge int
-		FullChargeCapacity int
-		DesignCapacity int
 	}
-	var bat batInfo
-	script := `Get-WmiObject Win32_Battery | Select-Object BatteryStatus,EstimatedChargeRemaining,FullChargeCapacity,DesignCapacity | Select-Object -First 1 @{N='Status';E={$_.BatteryStatus}},@{N='EstimatedCharge';E={$_.EstimatedChargeRemaining}},@{N='FullChargeCapacity';E={$_.FullChargeCapacity}},@{N='DesignCapacity';E={$_.DesignCapacity}}`
-	if err := psJSON(script, &bat); err != nil {
+	basic := `Get-CimInstance Win32_Battery | Select-Object -First 1 @{N='Status';E={[int]$_.BatteryStatus}},@{N='EstimatedCharge';E={[int]$_.EstimatedChargeRemaining}}`
+	if err := psJSON(basic, &bat); err != nil {
 		return types.StatusSkip, "No battery detected (desktop?)", ""
 	}
 
+	full := psInt(`(Get-CimInstance -Namespace root\wmi -ClassName BatteryFullChargedCapacity -ErrorAction SilentlyContinue | Select-Object -First 1).FullChargedCapacity`)
+	design := psInt(`(Get-CimInstance -Namespace root\wmi -ClassName BatteryStaticData -ErrorAction SilentlyContinue | Select-Object -First 1).DesignedCapacity`)
 	health := 0
-	if bat.DesignCapacity > 0 {
-		health = bat.FullChargeCapacity * 100 / bat.DesignCapacity
+	if design > 0 && full > 0 {
+		health = full * 100 / design
 	}
+
 	statusStr := "Unknown"
-	charging := false
 	switch bat.Status {
 	case 1:
 		statusStr = "Discharging"
@@ -125,14 +143,14 @@ func checkBattery() (types.Status, string, string) {
 		statusStr = "AC (not charging)"
 	case 3:
 		statusStr = "Fully charged"
-		charging = true
 	case 6, 7, 8, 9:
 		statusStr = "Charging"
-		charging = true
 	}
 
-	detail := fmt.Sprintf("%d%% charge | Health: %d%% | %s", bat.EstimatedCharge, health, statusStr)
-	_ = charging
+	detail := fmt.Sprintf("%d%% charge | %s", bat.EstimatedCharge, statusStr)
+	if health > 0 {
+		detail += fmt.Sprintf(" | Health: %d%%", health)
+	}
 
 	if health > 0 && health < 50 {
 		return types.StatusWarn, detail, "Battery health below 50%"
@@ -261,47 +279,78 @@ func checkOSUpdates() (types.Status, string, string) {
 
 // ── interactive hardware actions (Windows) ─────────────────────
 
+func probeCapabilities() capabilities {
+	var c capabilities
+	// System.Media.SoundPlayer / console beep are always available via .NET.
+	c.audioPlay = capability{ok: true, tool: "SoundPlayer"}
+	if t, ok := lookTools("ffmpeg"); ok {
+		c.audioRecord = capability{ok: true, tool: t}
+	} else {
+		c.audioRecord = capability{hint: "install ffmpeg for microphone capture"}
+	}
+	// ffmpeg gives the terminal preview; the Windows Camera app is the GUI
+	// fallback, so the webcam check can run even without ffmpeg.
+	if t, ok := lookTools("ffmpeg"); ok {
+		c.camera = capability{ok: true, tool: t}
+	} else {
+		c.camera = capability{ok: true, tool: "Camera app (GUI fallback)"}
+	}
+	return c
+}
+
 func playTestTone() {
+	tmp := cleanup.TempPathFor("stereo_test.wav")
+	if err := generateTestWAV(tmp); err == nil {
+		psQuery(fmt.Sprintf(`(New-Object System.Media.SoundPlayer '%s').PlaySync()`, tmp))
+		os.Remove(tmp)
+		return
+	}
 	psQuery(`[console]::beep(1000,500); [console]::beep(1500,500)`)
 }
 
 func playMicTest() {
-	// Record via PowerShell / Windows Media API — simplified prompt
-	fmt.Println("  (Microphone recording requires the full Windows build)")
-	time.Sleep(3 * time.Second)
+	tmp := cleanup.TempPathFor("mic_test.wav")
+	// Use ffmpeg for recording — most reliable cross-platform
+	rec := exec.Command("ffmpeg", "-y", "-f", "dshow", "-i", "audio=Microphone", "-t", "3", "-ar", "44100", "-ac", "1", tmp)
+	rec.Stdout = nil
+	rec.Stderr = nil
+	if err := rec.Run(); err != nil {
+		// Fallback: use PowerShell with Windows built-in recorder
+		psQuery(fmt.Sprintf(`
+			Add-Type -AssemblyName System.Speech
+			$r = New-Object System.Speech.Recognition.SpeechRecognitionEngine
+			$r.SetInputToDefaultAudioDevice()
+			Start-Sleep 3
+		`))
+		fmt.Println("  (Mic recording limited — verify manually)")
+		return
+	}
+	psQuery(fmt.Sprintf(`(New-Object System.Media.SoundPlayer '%s').PlaySync()`, tmp))
+	os.Remove(tmp)
 }
 
 func openCameraPreview() {
-	exec.Command("explorer.exe", "microsoft.windows.camera:").Run()
-	time.Sleep(3 * time.Second)
+	err := terminalCameraPreview(
+		[]string{"-f", "dshow", "-video_size", "320x240", "-i", "video=Integrated Webcam"},
+		5*time.Second,
+	)
+	if err != nil {
+		exec.Command("explorer.exe", "microsoft.windows.camera:").Run()
+		time.Sleep(5 * time.Second)
+	}
 }
 
 func runScreenTest() {
-	colors := []string{"WHITE", "BLACK", "RED", "GREEN", "BLUE"}
-	for _, c := range colors {
-		script := fmt.Sprintf(`Add-Type -AssemblyName System.Windows.Forms; $f=New-Object System.Windows.Forms.Form; $f.WindowState='Maximized'; $f.BackColor='%s'; $f.Show(); Start-Sleep 2; $f.Close()`, c)
-		exec.Command("powershell.exe", "-NoProfile", "-Command", script).Run()
-	}
+	fullScreenColorTest()
 }
 
-func runKeyboardTest() {
-	fmt.Println("  Type freely. Press Enter twice when done.")
-	reader := bufio.NewReader(os.Stdin)
-	emptyCount := 0
-	for emptyCount < 2 {
-		line, _ := reader.ReadString('\n')
-		if strings.TrimSpace(line) == "" {
-			emptyCount++
-		} else {
-			emptyCount = 0
-			fmt.Printf("  Got: %q\n", strings.TrimSpace(line))
-		}
-	}
+func runKeyboardTest() int {
+	return runVisualKeyboardTest()
 }
 
 func runUSBWatcher() {
-	fmt.Println("  Watching for USB insertions for 15 seconds...")
-	fmt.Println("  Insert devices now. Press ENTER to stop early.")
+	timeout := 30 * time.Second
+	start := time.Now()
 
 	done := make(chan struct{})
 	go func() {
@@ -309,12 +358,28 @@ func runUSBWatcher() {
 		close(done)
 	}()
 
-	timer := time.NewTimer(15 * time.Second)
+	fmt.Print("\033[?25l")
+	defer fmt.Print("\033[?25h\033[0m")
+
+	timer := time.NewTimer(timeout)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	defer timer.Stop()
 
 	seen := map[string]bool{}
+	var devices []usbDevice
+
+	// Snapshot existing devices
+	out, _ := psQuery(`Get-WmiObject Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'USB' } | Select-Object -ExpandProperty Name`)
+	for _, d := range strings.Split(out, "\n") {
+		d = strings.TrimSpace(d)
+		if d != "" {
+			seen[d] = true
+		}
+	}
+
+	renderUSBDisplay(devices, 0, timeout)
+
 	for {
 		select {
 		case <-done:
@@ -328,10 +393,11 @@ func runUSBWatcher() {
 					d = strings.TrimSpace(d)
 					if d != "" && !seen[d] {
 						seen[d] = true
-						fmt.Printf("  ✓ USB detected: %s\n", d)
+						devices = append(devices, usbDevice{name: d, when: time.Now()})
 					}
 				}
 			}
+			renderUSBDisplay(devices, time.Since(start), timeout)
 		}
 	}
 }

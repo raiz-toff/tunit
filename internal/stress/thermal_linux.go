@@ -75,3 +75,9 @@ func readMilliC(path string) float64 {
 	}
 	return float64(n) / 1000.0
 }
+
+// tempHint tells the technician why no CPU temperature was readable on Linux
+// and what usually fixes it.
+func tempHint() string {
+	return "No hwmon/thermal_zone sensor found — load the coretemp/k10temp module or install lm-sensors."
+}
