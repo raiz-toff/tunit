@@ -88,7 +88,11 @@ Exit code `0` on pass, `2` on fail.
 | `motherboard` | Windows activation (may deactivate after board swap) |
 | `battery` | Charging circuit (AC adapter + battery charging state) |
 
-Saves a report to `QC_REPORT_YYYYMMDD_HHMMSS.txt`.
+**Report output.** Interactive runs show the full report on screen and
+leave **no file on the machine** — it's written to a session temp directory
+that's removed on exit (including on Ctrl+C). Add `--auto` to keep a durable
+`QC_REPORT_YYYYMMDD_HHMMSS.txt` in the current directory (for CI or your own
+records); `tunit report` lists those saved files.
 
 ---
 
